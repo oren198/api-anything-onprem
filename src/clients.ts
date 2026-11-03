@@ -8,7 +8,7 @@ export interface Launch {
   /** absolute path of the node binary */
   command: string;
   args: string[];
-  /** API_ANYTHING_* settings of this shell, which a client started elsewhere would not pass on */
+  /** API_ANYTHING_* settings (home, browser, registry, internal hosts) and NODE_EXTRA_CA_CERTS of this shell, which a client started elsewhere would not pass on */
   env: Record<string, string>;
 }
 
@@ -16,7 +16,8 @@ export interface Launch {
 export function launchOf(entry: string, flags: string[], env: NodeJS.ProcessEnv = process.env): Launch {
   const viaTsx = entry.endsWith(".ts") ? ["--import", import.meta.resolve("tsx")] : [];
   const own = Object.entries(env).filter(
-    (e): e is [string, string] => /^API_ANYTHING_(HOME|BROWSER)$/.test(e[0]) && !!e[1],
+    (e): e is [string, string] =>
+      /^(API_ANYTHING_(HOME|BROWSER|REGISTRY|INTERNAL_HOSTS)|NODE_EXTRA_CA_CERTS)$/.test(e[0]) && !!e[1],
   );
   return { command: process.execPath, args: [...viaTsx, entry, "mcp", ...flags], env: Object.fromEntries(own) };
 }

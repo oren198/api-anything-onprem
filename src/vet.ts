@@ -6,6 +6,7 @@
 import { parse } from "tldts";
 import { walk } from "./codec.js";
 import { siteOf } from "./domain.js";
+import { hostInternal, internalHosts, ipInternal } from "./internal.js";
 import { linkProblems } from "./links.js";
 import {
   credentialName,
@@ -289,6 +290,9 @@ export function badAddress(url: string): string | undefined {
     return "is not an absolute URL";
   }
   if (u.protocol !== "https:") return "is not https";
+  // a host an internal deployment lists (docs/INTERNAL.md); still https only
+  const list = internalHosts();
+  if (hostInternal(u.hostname, list) || ipInternal(u.hostname, list)) return undefined;
   const h = parse(u.hostname, { allowPrivateDomains: true });
   if (h.isIp || !h.domain || !(h.isIcann || h.isPrivate)) return `has no public host (${u.hostname})`;
   return undefined;

@@ -50,6 +50,8 @@ export interface Settings {
   share: boolean;
   /** when the user answered, ISO time; absent: never asked */
   askedAt?: string;
+  /** this install's registry when API_ANYTHING_REGISTRY is unset: an internal deployment's (docs/INTERNAL.md) */
+  registry?: string;
 }
 
 export const QUESTION =
@@ -58,7 +60,11 @@ export const QUESTION =
 export function loadSettings(): Settings {
   try {
     const s = readJson<Partial<Settings>>(settingsFile(), {}) ?? {};
-    return { share: s.share === true && !!s.askedAt, ...(s.askedAt ? { askedAt: s.askedAt } : {}) };
+    return {
+      share: s.share === true && !!s.askedAt,
+      ...(s.askedAt ? { askedAt: s.askedAt } : {}),
+      ...(typeof s.registry === "string" && s.registry.trim() ? { registry: s.registry.trim() } : {}),
+    };
   } catch {
     return { share: false };
   }
@@ -69,4 +75,5 @@ export function saveSettings(s: Settings): void {
 }
 
 /** Keeps the user's answer to `QUESTION`: it is not asked again. */
-export const answerShare = (share: boolean) => saveSettings({ share, askedAt: new Date().toISOString() });
+export const answerShare = (share: boolean) =>
+  saveSettings({ ...loadSettings(), share, askedAt: new Date().toISOString() });

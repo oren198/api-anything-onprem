@@ -20,12 +20,25 @@ export { summarize };
 
 const LOCAL = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
-/** The registry's base URL: `API_ANYTHING_REGISTRY`, https (or http to this machine, for tests). */
+let warnedPublic = false;
+
+/**
+ * The registry's base URL: `API_ANYTHING_REGISTRY`, else settings.json `registry`, else the public one; https
+ * (or http to this machine, for tests). An install with internal hosts set that would use the public
+ * registry says so on stderr, once: an internal deployment meant its own (docs/INTERNAL.md).
+ */
 export function registryBase(): string {
-  const base = (process.env.API_ANYTHING_REGISTRY || REGISTRY_API).replace(/\/+$/, "");
+  const chosen = process.env.API_ANYTHING_REGISTRY || loadSettings().registry;
+  const base = (chosen || REGISTRY_API).replace(/\/+$/, "");
   const u = new URL(base);
   if (u.protocol !== "https:" && !(u.protocol === "http:" && LOCAL.has(u.hostname)))
     throw new Error(`API_ANYTHING_REGISTRY must be https: ${base}`);
+  if (!chosen && process.env.API_ANYTHING_INTERNAL_HOSTS?.trim() && !warnedPublic) {
+    warnedPublic = true;
+    process.stderr.write(
+      `api-anything: API_ANYTHING_INTERNAL_HOSTS is set but no registry is: using the public ${REGISTRY_API}. Set API_ANYTHING_REGISTRY or settings.json "registry" to your own.\n`,
+    );
+  }
   return base;
 }
 

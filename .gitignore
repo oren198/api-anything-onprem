@@ -10,3 +10,6 @@ bench/explore/state/
 _site/
 .wrangler/
 docs/media/explainer/frames/
+
+# local Worker secrets (wrangler dev)
+.dev.vars

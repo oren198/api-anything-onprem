@@ -4,6 +4,7 @@ import { lookup } from "node:dns/promises";
 import { isIPv4, isIPv6 } from "node:net";
 import * as zlib from "node:zlib";
 import { asText, fillSlotTemplate, setAt, templateRefs, walk } from "./codec.js";
+import { hostInternal, internalHosts, ipInternal } from "./internal.js";
 import { matches } from "./learn.js";
 import { cookieHeaderFor, cookieValue, parseSetCookie, type Session } from "./session.js";
 import type { Match, Operation, Param, Request } from "./spec.js";
@@ -85,6 +86,21 @@ export function privateAddress(ip: string): boolean {
   return (first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80 || (first & 0xff00) === 0xff00;
 }
 
+/** A private LAN address: 10/8, 172.16/12, 192.168/16, CGNAT 100.64/10, unique-local fc00::/7 (or one mapped into v6). */
+export function lanAddress(ip: string): boolean {
+  const h = ip.toLowerCase().replace(/^\[|\]$/g, "");
+  const tail = /^(?:::ffff:|64:ff9b::)(\d+\.\d+\.\d+\.\d+)$/.exec(h)?.[1];
+  if (tail) return lanAddress(tail);
+  const v4 = octets(h);
+  if (v4) {
+    const [a, b] = v4 as [number, number];
+    return (
+      a === 10 || (a === 172 && b >= 16 && b < 32) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b < 128)
+    );
+  }
+  return isIPv6(h) && (Number.parseInt(h.split(":")[0] || "0", 16) & 0xfe00) === 0xfc00;
+}
+
 /**
  * Why a public-only request may not go to `url`, or undefined when it may: `badAddress`, then every
  * address the host resolves to. ponytail: fetch resolves the host again when it connects, so a DNS
@@ -102,7 +118,13 @@ export async function publicAddress(url: string): Promise<string | undefined> {
     return `has a host that does not resolve (${host}: ${(e as { code?: string }).code ?? (e as Error).message})`;
   }
   if (!found.length) return `has a host that does not resolve (${host})`;
-  const inside = found.find((a) => privateAddress(a.address));
+  // an internal deployment's allowlist (docs/INTERNAL.md): a listed CIDR admits its addresses; a listed
+  // host admits private LAN ranges only, never loopback, link-local (cloud metadata) or multicast
+  const list = internalHosts();
+  const named = hostInternal(host, list);
+  const inside = found.find(
+    (a) => privateAddress(a.address) && !ipInternal(a.address, list) && !(named && lanAddress(a.address)),
+  );
   return inside ? `has a host that resolves to the non-public address ${inside.address} (${host})` : undefined;
 }
 

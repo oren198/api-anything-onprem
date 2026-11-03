@@ -79,13 +79,55 @@ export function prefixOf(ip: string): string {
     .join(":");
 }
 
+/** Where the registry reads a request's IP and ASN from (docs/INTERNAL.md "Registry"). */
+export interface NetworkSource {
+  /** a header the deployment's own proxy sets, e.g. x-forwarded-for; unset: cf-connecting-ip */
+  trustedIpHeader?: string;
+  /** which address of a comma-separated header: 1 (default) the rightmost, the hop the trusted proxy saw; n: the nth from the right */
+  trustedHops?: number;
+  /** false: not behind Cloudflare, so cf-connecting-ip and request.cf are a client's to forge and are ignored */
+  cloudflare?: boolean;
+}
+
+/** The NetworkSource of a Worker env: TRUSTED_IP_HEADER, TRUSTED_PROXY_HOPS, BEHIND_CLOUDFLARE ("false" or "0" turns it off). */
+export function networkSource(env: Record<string, unknown>): NetworkSource {
+  const header = typeof env.TRUSTED_IP_HEADER === "string" ? env.TRUSTED_IP_HEADER.trim().toLowerCase() : "";
+  const hops = Number(env.TRUSTED_PROXY_HOPS);
+  const cf = typeof env.BEHIND_CLOUDFLARE === "string" ? !/^(false|0|no)$/i.test(env.BEHIND_CLOUDFLARE.trim()) : true;
+  return {
+    ...(header ? { trustedIpHeader: header } : {}),
+    ...(Number.isInteger(hops) && hops >= 1 ? { trustedHops: hops } : {}),
+    cloudflare: cf,
+  };
+}
+
+/**
+ * The client IP by `source`: the trusted header's nth address from the right (a client can prepend any
+ * addresses it likes to x-forwarded-for, but not the ones the proxies append), else cf-connecting-ip
+ * behind Cloudflare, else "" (one unknown network).
+ */
+export function clientIp(headers: Headers, source: NetworkSource = {}): string {
+  if (source.trustedIpHeader) {
+    const hops = (headers.get(source.trustedIpHeader) ?? "")
+      .split(",")
+      .map((h) => h.trim())
+      .filter(Boolean);
+    return hops[hops.length - (source.trustedHops ?? 1)] ?? "";
+  }
+  return source.cloudflare === false ? "" : (headers.get("cf-connecting-ip") ?? "");
+}
+
 /**
  * The request's networks, hashed with the salt: `network` (its ASN, else its IP prefix) is what promotion
  * counts; `prefix` (always the IP prefix) is what rate limits count, since one ASN holds a whole ISP.
  */
-export async function networksOf(request: Request, salt: string): Promise<{ network: string; prefix: string }> {
-  const asn = (request as Request & { cf?: { asn?: number } }).cf?.asn;
-  const ip = `ip:${prefixOf(request.headers.get("cf-connecting-ip") ?? "")}`;
+export async function networksOf(
+  request: Request,
+  salt: string,
+  source: NetworkSource = {},
+): Promise<{ network: string; prefix: string }> {
+  const asn = source.cloudflare === false ? undefined : (request as Request & { cf?: { asn?: number } }).cf?.asn;
+  const ip = `ip:${prefixOf(clientIp(request.headers, source))}`;
   const hash = async (s: string) => (await sha256Hex(`${salt}\n${s}`)).slice(0, 32);
   const prefix = await hash(ip);
   return { network: asn ? await hash(`asn:${asn}`) : prefix, prefix };
