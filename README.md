@@ -317,6 +317,8 @@ Agent hosts that only call installed operations can use [`api-anything/host`](do
 It provides local discovery, redacted approval plans and call-only execution without learning,
 cookie import or registry traffic. Bun can import its TypeScript source without a build step.
 
+Running it inside a company network, with a private registry and internal sites: [docs/INTERNAL.md](docs/INTERNAL.md).
+
 </details>
 
 ## Teach it a new site
