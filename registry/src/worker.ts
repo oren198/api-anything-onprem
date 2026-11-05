@@ -1,6 +1,7 @@
 /** The registry Worker: the HTTP surface of src/registry-api.ts, the pages, and the daily archive. */
 import { z } from "zod";
 import { siteOf } from "../../src/domain.js";
+import { setInternalHosts } from "../../src/internal.js";
 import {
   anonymous,
   type ClaimResult,
@@ -17,7 +18,7 @@ import {
 import { domainOf } from "../../src/search.js";
 import type { Operation } from "../../src/spec.js";
 import { badAddress, uploadProblems } from "../../src/vet.js";
-import { networksOf, sha256Hex, signatureHeaders, signer } from "./auth.js";
+import { networkSource, networksOf, sha256Hex, signatureHeaders, signer } from "./auth.js";
 import { catalog, confirmed, entryOf, search } from "./catalog.js";
 import { CSP, homePage, sitemap, sitePage } from "./pages.js";
 import { nextStatus, type Thresholds, thresholds, toArchive } from "./rules.js";
@@ -261,7 +262,7 @@ async function searchApi(c: Ctx) {
   // a site agents want and nobody shared: its domain, never the words of a search
   const domain = matches.length ? undefined : asked;
   if (domain) {
-    const { network } = await networksOf(c.request, salt(c));
+    const { network } = await networksOf(c.request, salt(c), networkSource(c.env));
     await wantDomain(c.env.DB, domain, network, new Date(c.now).toISOString());
     // not cached: the next network asking for it is counted too
     return json({ matches }, 200, { "cache-control": "no-store" });
@@ -309,7 +310,7 @@ async function addInterface(c: Ctx) {
   if (!r.success) throw new HttpError(400, "the body is { kind: mcp | openapi, url }", issues(r.error));
   const bad = badAddress(r.data.url);
   if (bad) throw new HttpError(422, "the interface is refused", [`its url ${bad}`]);
-  const { network, prefix } = await networksOf(c.request, salt(c));
+  const { network, prefix } = await networksOf(c.request, salt(c), networkSource(c.env));
   await spend(c, "upload", key, prefix, 1);
   const domain = siteOf(new URL(r.data.url).hostname);
   await reportInterface(c.env.DB, { ...r.data, domain, key, network }, new Date(c.now).toISOString());
@@ -364,7 +365,7 @@ async function isHeal(c: Ctx, healedFrom: string | undefined, site: string, op: 
 
 async function upload(c: Ctx) {
   const key = await keyOf(c, true);
-  const { network, prefix } = await networksOf(c.request, salt(c));
+  const { network, prefix } = await networksOf(c.request, salt(c), networkSource(c.env));
   await newKeyLimit(c, key);
   await spend(c, "upload", key, prefix, 1);
   const now = new Date(c.now).toISOString();
@@ -470,7 +471,7 @@ async function claims(c: Ctx) {
   if (c.request.method === "POST") {
     const r = ClaimSchema.safeParse(parseJson(c.body));
     if (!r.success) throw new HttpError(400, "the body is a Claim", issues(r.error));
-    const { network, prefix } = await networksOf(c.request, salt(c));
+    const { network, prefix } = await networksOf(c.request, salt(c), networkSource(c.env));
     await spend(c, "upload", key, prefix, 1);
     const bound = await getSite(c.env.DB, r.data.site.name);
     if (bound && bound.domain !== r.data.site.domain)
@@ -502,7 +503,7 @@ async function reports(c: Ctx) {
     .safeParse(Array.isArray(raw) ? raw : (raw as { reports?: unknown } | null)?.reports);
   if (!list.success)
     throw new HttpError(400, `the body is { reports: Report[] }, at most ${MAX_REPORTS}`, issues(list.error));
-  const { network, prefix } = await networksOf(c.request, salt(c));
+  const { network, prefix } = await networksOf(c.request, salt(c), networkSource(c.env));
   await spend(c, "report", key, prefix, list.data.length);
   const db = c.env.DB;
   const now = new Date(c.now).toISOString();
@@ -738,6 +739,8 @@ async function answer(request: Request, env: Env): Promise<Response> {
 
 export default {
   async fetch(request: Request, env: Env, ctx?: { waitUntil(p: Promise<unknown>): void }): Promise<Response> {
+    // the internal hosts this registry accepts uploads for (docs/INTERNAL.md); none by default
+    setInternalHosts(typeof env.INTERNAL_HOSTS === "string" ? env.INTERNAL_HOSTS : "");
     const cache = cacheable(request) ? edgeCache() : undefined;
     const key = new Request(request.url, { method: "GET" });
     const hit = await cache?.match(key);
@@ -757,6 +760,7 @@ export default {
    * archived over 30 days ago, with its reports; recount every version as reports age out.
    */
   async scheduled(controller: { scheduledTime: number; cron?: string }, env: Env): Promise<void> {
+    setInternalHosts(typeof env.INTERNAL_HOSTS === "string" ? env.INTERNAL_HOSTS : "");
     const now = controller.scheduledTime;
     const t = thresholds(env);
     if (controller.cron === EVERY_MINUTE) {
